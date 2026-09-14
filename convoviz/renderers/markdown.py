@@ -1,5 +1,5 @@
 # convoviz/renderers/markdown.py
-# GPT-5.6 Sol | CONVOVIZ-FORK-FIDELITY-FIX-20260913 | 2026-09-14
+# GPT-5.6 Sol | CONVOVIZ-FORK-MISSING-ATTACHMENT-FIX-20260914 | 2026-09-14
 """Markdown rendering for conversations."""
 
 import re
@@ -406,16 +406,23 @@ def _render_files(
     message: Any,
     asset_resolver: Callable[[str, str | None], str | None] | None,
 ) -> str:
-    """Format ordinary non-image attachments as markdown links."""
-    if not asset_resolver or not message.files:
+    """Format ordinary non-image attachments as links or missing placeholders."""
+    if not message.files:
         return ""
 
     file_markdown = []
     for asset_id, target_name in message.files:
-        if rel_path := asset_resolver(asset_id, target_name):
+        rel_path = asset_resolver(asset_id, target_name) if asset_resolver else None
+        if rel_path:
             encoded_path = quote(rel_path)
             label = target_name or asset_id
             file_markdown.append(f"\n[Attachment: {label}]({encoded_path})\n")
+            continue
+
+        label = target_name or f"attachment {asset_id}"
+        missing_label = f"[Missing attachment: {label} \u2014 "
+        missing_label += "payload absent from OpenAI export]"
+        file_markdown.append(f"\n{missing_label}\n<!-- attachment_id={asset_id} -->\n")
     return "".join(file_markdown)
 
 
