@@ -1,3 +1,5 @@
+# convoviz/message_logic.py
+# GPT-5.6 Sol | CONVOVIZ-FORK-FIDELITY-FIX-20260913 | 2026-09-14
 """Message interpretation utilities.
 
 Keeps complex extraction and visibility rules outside of pure data models.
@@ -51,15 +53,44 @@ def extract_message_images(message: Message) -> list[str]:
     return image_ids
 
 
+def extract_message_files(message: Message) -> list[tuple[str, str | None]]:
+    """Extract non-image file attachments without duplicating images."""
+    files: list[tuple[str, str | None]] = []
+    seen = set(message.images)
+    for att in message.metadata.attachments or []:
+        if not isinstance(att, dict) or _is_image_attachment(att):
+            continue
+        att_id = att.get("id")
+        if not isinstance(att_id, str) or not att_id or att_id in seen:
+            continue
+        name = att.get("name")
+        files.append((att_id, name if isinstance(name, str) and name else None))
+        seen.add(att_id)
+    return files
+
+
 def _render_thoughts(thoughts: list[dict[str, Any]] | None) -> str:
-    """Render thoughts content (list of thought objects with summary/content)."""
+    """Render exported reasoning without dropping detailed thought content."""
     if not thoughts:
         return ""
-    summaries = []
+
+    rendered: list[str] = []
     for thought in thoughts:
-        if isinstance(thought, dict) and (summary := thought.get("summary")):
-            summaries.append(summary)
-    return "\n".join(summaries) if summaries else ""
+        if not isinstance(thought, dict):
+            continue
+        summary = thought.get("summary")
+        content = thought.get("content")
+        summary_text = summary.strip() if isinstance(summary, str) else ""
+        content_text = content.strip() if isinstance(content, str) else ""
+
+        if summary_text and content_text and summary_text != content_text:
+            rendered.append(f"**{summary_text}**\n\n{content_text}")
+        elif content_text:
+            rendered.append(content_text)
+        elif summary_text:
+            rendered.append(summary_text)
+
+    return "\n\n".join(rendered)
 
 
 def _render_tether_quote(content: Any) -> str:
@@ -170,7 +201,7 @@ def extract_message_text(message: Message) -> str:
     if content.result is not None:
         return content.result
 
-    if extract_message_images(message):
+    if extract_message_images(message) or extract_message_files(message):
         # Image-only/tool-only messages should render as image blocks,
         # not fail text extraction.
         return ""
@@ -272,24 +303,27 @@ def is_message_hidden(message: Message) -> bool:
 
 
 def extract_internal_citation_map(message: Message) -> dict[str, dict[str, str | None]]:
-    """Extract a map of citation IDs to metadata from content parts."""
+    """Extract embedded citation IDs from legacy and current export metadata."""
     citation_mapping: dict[str, dict[str, str | None]] = {}
     parts = message.content.parts or []
+
+    def ref_key(ref_id: Any) -> str | None:
+        if not isinstance(ref_id, dict):
+            return None
+        ref_type = ref_id.get("ref_type")
+        turn_idx = ref_id.get("turn_index")
+        ref_idx = ref_id.get("ref_index")
+        if not isinstance(ref_type, str) or not ref_type:
+            return None
+        if not isinstance(turn_idx, int) or not isinstance(ref_idx, int):
+            return None
+        return f"turn{turn_idx}{ref_type}{ref_idx}"
 
     def process_entry(entry: Any) -> None:
         if not isinstance(entry, dict):
             return
-        ref_id = entry.get("ref_id")
-        if not isinstance(ref_id, dict):
-            return
-        if ref_id.get("ref_type") != "search":
-            return
-
-        turn_idx = ref_id.get("turn_index")
-        ref_idx = ref_id.get("ref_index")
-
-        if turn_idx is not None and ref_idx is not None:
-            key = f"turn{turn_idx}search{ref_idx}"
+        key = ref_key(entry.get("ref_id"))
+        if key:
             citation_mapping[key] = {
                 "title": entry.get("title"),
                 "url": entry.get("url"),
@@ -303,10 +337,26 @@ def extract_internal_citation_map(message: Message) -> dict[str, dict[str, str |
                 for entry in part.get("entries", []):
                     process_entry(entry)
 
-    if message.metadata and message.metadata.search_result_groups:
-        for group in message.metadata.search_result_groups:
-            if isinstance(group, dict):
-                for entry in group.get("entries", []):
-                    process_entry(entry)
+    for group in message.metadata.search_result_groups or []:
+        if isinstance(group, dict):
+            for entry in group.get("entries", []):
+                process_entry(entry)
+
+    for reference in message.metadata.content_references or []:
+        if (
+            not isinstance(reference, dict)
+            or reference.get("type") != "grouped_webpages"
+        ):
+            continue
+        items = list(reference.get("items") or []) + list(
+            reference.get("fallback_items") or []
+        )
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            metadata = {"title": item.get("title"), "url": item.get("url")}
+            for ref_id in item.get("refs") or []:
+                if key := ref_key(ref_id):
+                    citation_mapping[key] = metadata
 
     return citation_mapping

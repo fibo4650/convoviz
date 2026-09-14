@@ -1,3 +1,5 @@
+# convoviz/models/node.py
+# GPT-5.6 Sol | CONVOVIZ-FORK-FIDELITY-FIX-20260913 | 2026-09-14
 """Node model - pure data class.
 
 Object path: conversations.json -> conversation -> mapping -> mapping node
@@ -63,11 +65,22 @@ def build_node_tree(mapping: dict[str, Node]) -> dict[str, Node]:
         node.children_nodes = []
         node.parent_node = None
 
-    # Build connections
+    # Parent pointers are authoritative in current ChatGPT exports.
+    # Newer exports may omit `children` entirely, while older exports include both.
+    for node in mapping.values():
+        if node.parent and node.parent in mapping:
+            mapping[node.parent].add_child(node)
+
+    # Backward compatibility for child-only/legacy records: use explicit child lists
+    # only when the child has no usable parent pointer. If both disagree, trust parent.
     for node in mapping.values():
         for child_id in node.children:
-            if child_id in mapping:
-                child_node = mapping[child_id]
+            if child_id not in mapping:
+                continue
+            child_node = mapping[child_id]
+            if child_node.parent_node is None and not (
+                child_node.parent and child_node.parent in mapping
+            ):
                 node.add_child(child_node)
 
     return mapping

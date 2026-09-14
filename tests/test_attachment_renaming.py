@@ -1,3 +1,5 @@
+# tests/test_attachment_renaming.py
+# GPT-5.6 Sol | CONVOVIZ-FORK-FIDELITY-FIX-20260913 | 2026-09-14
 """Tests for attachment renaming functionality."""
 
 from pathlib import Path
@@ -180,7 +182,7 @@ def test_copy_asset_sanitizes_name(tmp_path: Path) -> None:
     assert (dest_dir / "assets" / sanitized_name).exists()
 
 
-def test_non_image_attachment_not_rendered() -> None:
+def test_non_image_attachment_rendered_as_file_link() -> None:
     """Non-image attachments should not be rendered as images."""
     content = MessageContent(content_type="text", text="Hello")
     metadata = MessageMetadata(
@@ -207,5 +209,6 @@ def test_non_image_attachment_not_rendered() -> None:
     headers = AuthorHeaders()
     result = render_node(node, headers, asset_resolver=mock_resolver)
 
-    assert resolver_calls == []
+    assert resolver_calls == [("file-999", "report.pdf")]
+    assert "[Attachment: report.pdf](assets/report.pdf)" in result
     assert "![Image]" not in result

@@ -1,3 +1,5 @@
+# convoviz/renderers/markdown.py
+# GPT-5.6 Sol | CONVOVIZ-FORK-FIDELITY-FIX-20260913 | 2026-09-14
 """Markdown rendering for conversations."""
 
 import re
@@ -89,6 +91,7 @@ def replace_citations(
                 {
                     "start": match.start(),
                     "keys": keys,
+                    "raw": match.group(0),
                     "replacement": "",
                 }
             )
@@ -124,7 +127,10 @@ def replace_citations(
             marker = register_footnote(data.get("title"), data.get("url"))
             if marker:
                 markers.append(marker)
-        entry["replacement"] = " ".join(markers)
+        replacement = " ".join(markers)
+        if len(markers) < len(entry["keys"]):
+            replacement = f"{replacement} {entry['raw']}".strip()
+        entry["replacement"] = replacement
 
     # Apply v4 replacements from end of string to start to keep indices stable.
     for entry in sorted(
@@ -396,6 +402,23 @@ def _render_images(
     return "".join(image_markdown)
 
 
+def _render_files(
+    message: Any,
+    asset_resolver: Callable[[str, str | None], str | None] | None,
+) -> str:
+    """Format ordinary non-image attachments as markdown links."""
+    if not asset_resolver or not message.files:
+        return ""
+
+    file_markdown = []
+    for asset_id, target_name in message.files:
+        if rel_path := asset_resolver(asset_id, target_name):
+            encoded_path = quote(rel_path)
+            label = target_name or asset_id
+            file_markdown.append(f"\n[Attachment: {label}]({encoded_path})\n")
+    return "".join(file_markdown)
+
+
 def render_node(
     node: Node,
     headers: AuthorHeaders,
@@ -456,11 +479,12 @@ def render_node(
             content = replace_latex_delimiters(content)
 
     images = _render_images(message, asset_resolver)
+    files = _render_files(message, asset_resolver)
     footnotes = ""
     if citation_footnotes:
         footnotes = "\n" + "\n".join(citation_footnotes) + "\n"
 
-    return f"\n{header}{timestamp}{content}{images}{footnotes}\n***\n"
+    return f"\n{header}{timestamp}{content}{images}{files}{footnotes}\n***\n"
 
 
 def _ordered_nodes_full(conversation: Conversation) -> list[Node]:

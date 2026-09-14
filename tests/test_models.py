@@ -1,3 +1,5 @@
+# tests/test_models.py
+# GPT-5.6 Sol | CONVOVIZ-FORK-FIDELITY-FIX-20260913 | 2026-09-14
 """Tests for the models."""
 
 import copy
@@ -471,7 +473,11 @@ def test_new_content_types() -> None:
         content=MessageContent(
             content_type="thoughts",
             thoughts=[
-                {"summary": "Thinking about the problem...", "finished": True},
+                {
+                    "summary": "Thinking about the problem...",
+                    "content": "Detailed reasoning that must be preserved.",
+                    "finished": True,
+                },
                 {"summary": "Considering alternatives.", "finished": True},
             ],
         ),
@@ -479,6 +485,7 @@ def test_new_content_types() -> None:
         **base_data,
     )
     assert "Thinking about the problem..." in msg.text
+    assert "Detailed reasoning that must be preserved." in msg.text
     assert "Considering alternatives." in msg.text
     assert msg.is_hidden  # Hidden: internal reasoning noise
 
@@ -601,6 +608,35 @@ class TestBuildNodeTree:
         # Should not raise, just skip the missing child
         result = build_node_tree(mapping)
         assert len(result["root"].children_nodes) == 0
+
+    def test_parent_only_export_reconstructs_tree(self) -> None:
+        """Current ChatGPT exports may omit children and keep only parent pointers."""
+        mapping = {
+            "root": Node(id="root", parent=None),
+            "child1": Node(id="child1", parent="root"),
+            "child2": Node(id="child2", parent="child1"),
+        }
+
+        result = build_node_tree(mapping)
+
+        assert result["child1"].parent_node == result["root"]
+        assert result["child2"].parent_node == result["child1"]
+        assert result["child1"] in result["root"].children_nodes
+        assert result["child2"] in result["child1"].children_nodes
+
+    def test_parent_pointer_wins_over_conflicting_children(self) -> None:
+        """When old/new relationship fields disagree, trust the child's parent pointer."""
+        mapping = {
+            "root_a": Node(id="root_a", parent=None, children=["child"]),
+            "root_b": Node(id="root_b", parent=None, children=[]),
+            "child": Node(id="child", parent="root_b", children=[]),
+        }
+
+        result = build_node_tree(mapping)
+
+        assert result["child"].parent_node == result["root_b"]
+        assert result["child"] in result["root_b"].children_nodes
+        assert result["child"] not in result["root_a"].children_nodes
 
 
 def test_ordered_nodes_handles_parent_cycles() -> None:
@@ -865,3 +901,59 @@ class TestCollectionProperties:
 
         assert "conversation_111" in index
         assert index["conversation_111"] == mock_conversation
+
+
+def test_file_only_message_is_not_empty() -> None:
+    """File-only messages remain visible to the renderer."""
+    message = Message(
+        id="file-only",
+        author=MessageAuthor(role="user"),
+        content=MessageContent(content_type="text"),
+        metadata=MessageMetadata(
+            attachments=[
+                {
+                    "id": "file-123",
+                    "name": "notes.md",
+                    "mime_type": "text/markdown",
+                }
+            ]
+        ),
+    )
+
+    assert message.files == [("file-123", "notes.md")]
+    assert message.text == ""
+    assert message.has_content
+    assert not message.is_empty
+
+
+def test_internal_citation_map_reads_current_content_references() -> None:
+    """Current grouped_webpages metadata resolves embedded citation ref types."""
+    msg = Message(
+        id="current-citations",
+        author=MessageAuthor(role="assistant"),
+        content=MessageContent(content_type="text", parts=["Sources"]),
+        metadata=MessageMetadata(
+            content_references=[
+                {
+                    "type": "grouped_webpages",
+                    "items": [
+                        {
+                            "title": "Current source",
+                            "url": "https://example.com/current",
+                            "refs": [
+                                {"ref_type": "search", "turn_index": 4, "ref_index": 1},
+                                {"ref_type": "view", "turn_index": 4, "ref_index": 2},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        ),
+    )
+
+    citation_map = msg.internal_citation_map
+    assert citation_map["turn4search1"] == {
+        "title": "Current source",
+        "url": "https://example.com/current",
+    }
+    assert citation_map["turn4view2"] == citation_map["turn4search1"]
