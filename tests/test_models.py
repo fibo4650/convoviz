@@ -1,3 +1,5 @@
+# tests/test_models.py
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Tests for the models."""
 
 import copy
@@ -143,6 +145,144 @@ def test_internal_citation_map_ignores_non_dict_ref_id() -> None:
         recipient="all",
     )
     assert msg.internal_citation_map == {}
+
+
+
+def test_internal_citation_map_drops_conflicting_primary_definition() -> None:
+    """A reused citation token with different sources must remain unresolved."""
+    msg = Message.model_validate(
+        {
+            "id": "msg",
+            "author": {"role": "assistant", "metadata": {}},
+            "content": {"content_type": "text", "parts": ["hello"]},
+            "metadata": {
+                "content_references": [
+                    {
+                        "type": "grouped_webpages",
+                        "items": [
+                            {
+                                "title": "Source A",
+                                "url": "https://example.com/a",
+                                "refs": [
+                                    {
+                                        "ref_type": "search",
+                                        "turn_index": 0,
+                                        "ref_index": 1,
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "type": "grouped_webpages",
+                        "items": [
+                            {
+                                "title": "Source B",
+                                "url": "https://example.com/b",
+                                "refs": [
+                                    {
+                                        "ref_type": "search",
+                                        "turn_index": 0,
+                                        "ref_index": 1,
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                ]
+            },
+        }
+    )
+    assert "turn0search1" not in msg.internal_citation_map
+
+
+def test_internal_citation_map_primary_beats_conflicting_fallback() -> None:
+    """Fallback metadata must never replace a primary grouped-webpage source."""
+    msg = Message.model_validate(
+        {
+            "id": "msg",
+            "author": {"role": "assistant", "metadata": {}},
+            "content": {"content_type": "text", "parts": ["hello"]},
+            "metadata": {
+                "content_references": [
+                    {
+                        "type": "grouped_webpages",
+                        "items": [
+                            {
+                                "title": "Primary",
+                                "url": "https://example.com/primary",
+                                "refs": [
+                                    {
+                                        "ref_type": "search",
+                                        "turn_index": 0,
+                                        "ref_index": 2,
+                                    }
+                                ],
+                            }
+                        ],
+                        "fallback_items": [
+                            {
+                                "title": "Fallback",
+                                "url": "https://example.com/fallback",
+                                "refs": [
+                                    {
+                                        "ref_type": "search",
+                                        "turn_index": 0,
+                                        "ref_index": 2,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+    assert msg.internal_citation_map["turn0search2"] == {
+        "title": "Primary",
+        "url": "https://example.com/primary",
+    }
+
+
+
+def test_internal_citation_map_later_primary_beats_earlier_fallback() -> None:
+    """Primary metadata wins even when an earlier reference exposed fallback first."""
+    ref = {"ref_type": "search", "turn_index": 0, "ref_index": 3}
+    msg = Message.model_validate(
+        {
+            "id": "msg",
+            "author": {"role": "assistant", "metadata": {}},
+            "content": {"content_type": "text", "parts": ["hello"]},
+            "metadata": {
+                "content_references": [
+                    {
+                        "type": "grouped_webpages",
+                        "fallback_items": [
+                            {
+                                "title": "Fallback",
+                                "url": "https://example.com/fallback",
+                                "refs": [ref],
+                            }
+                        ],
+                    },
+                    {
+                        "type": "grouped_webpages",
+                        "items": [
+                            {
+                                "title": "Primary",
+                                "url": "https://example.com/primary",
+                                "refs": [ref],
+                            }
+                        ],
+                    },
+                ]
+            },
+        }
+    )
+    assert msg.internal_citation_map["turn0search3"] == {
+        "title": "Primary",
+        "url": "https://example.com/primary",
+    }
 
 
 def test_message_missing_status_and_weight_uses_defaults() -> None:
@@ -471,7 +611,11 @@ def test_new_content_types() -> None:
         content=MessageContent(
             content_type="thoughts",
             thoughts=[
-                {"summary": "Thinking about the problem...", "finished": True},
+                {
+                    "summary": "Thinking about the problem...",
+                    "content": "Detailed reasoning that must be preserved.",
+                    "finished": True,
+                },
                 {"summary": "Considering alternatives.", "finished": True},
             ],
         ),
@@ -479,6 +623,7 @@ def test_new_content_types() -> None:
         **base_data,
     )
     assert "Thinking about the problem..." in msg.text
+    assert "Detailed reasoning that must be preserved." in msg.text
     assert "Considering alternatives." in msg.text
     assert msg.is_hidden  # Hidden: internal reasoning noise
 
@@ -601,6 +746,35 @@ class TestBuildNodeTree:
         # Should not raise, just skip the missing child
         result = build_node_tree(mapping)
         assert len(result["root"].children_nodes) == 0
+
+    def test_parent_only_export_reconstructs_tree(self) -> None:
+        """Current ChatGPT exports may omit children and keep only parent pointers."""
+        mapping = {
+            "root": Node(id="root", parent=None),
+            "child1": Node(id="child1", parent="root"),
+            "child2": Node(id="child2", parent="child1"),
+        }
+
+        result = build_node_tree(mapping)
+
+        assert result["child1"].parent_node == result["root"]
+        assert result["child2"].parent_node == result["child1"]
+        assert result["child1"] in result["root"].children_nodes
+        assert result["child2"] in result["child1"].children_nodes
+
+    def test_parent_pointer_wins_over_conflicting_children(self) -> None:
+        """When old/new relationship fields disagree, trust the child's parent pointer."""
+        mapping = {
+            "root_a": Node(id="root_a", parent=None, children=["child"]),
+            "root_b": Node(id="root_b", parent=None, children=[]),
+            "child": Node(id="child", parent="root_b", children=[]),
+        }
+
+        result = build_node_tree(mapping)
+
+        assert result["child"].parent_node == result["root_b"]
+        assert result["child"] in result["root_b"].children_nodes
+        assert result["child"] not in result["root_a"].children_nodes
 
 
 def test_ordered_nodes_handles_parent_cycles() -> None:
@@ -865,3 +1039,59 @@ class TestCollectionProperties:
 
         assert "conversation_111" in index
         assert index["conversation_111"] == mock_conversation
+
+
+def test_file_only_message_is_not_empty() -> None:
+    """File-only messages remain visible to the renderer."""
+    message = Message(
+        id="file-only",
+        author=MessageAuthor(role="user"),
+        content=MessageContent(content_type="text"),
+        metadata=MessageMetadata(
+            attachments=[
+                {
+                    "id": "file-123",
+                    "name": "notes.md",
+                    "mime_type": "text/markdown",
+                }
+            ]
+        ),
+    )
+
+    assert message.files == [("file-123", "notes.md")]
+    assert message.text == ""
+    assert message.has_content
+    assert not message.is_empty
+
+
+def test_internal_citation_map_reads_current_content_references() -> None:
+    """Current grouped_webpages metadata resolves embedded citation ref types."""
+    msg = Message(
+        id="current-citations",
+        author=MessageAuthor(role="assistant"),
+        content=MessageContent(content_type="text", parts=["Sources"]),
+        metadata=MessageMetadata(
+            content_references=[
+                {
+                    "type": "grouped_webpages",
+                    "items": [
+                        {
+                            "title": "Current source",
+                            "url": "https://example.com/current",
+                            "refs": [
+                                {"ref_type": "search", "turn_index": 4, "ref_index": 1},
+                                {"ref_type": "view", "turn_index": 4, "ref_index": 2},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        ),
+    )
+
+    citation_map = msg.internal_citation_map
+    assert citation_map["turn4search1"] == {
+        "title": "Current source",
+        "url": "https://example.com/current",
+    }
+    assert citation_map["turn4view2"] == citation_map["turn4search1"]

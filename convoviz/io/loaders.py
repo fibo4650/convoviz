@@ -1,3 +1,5 @@
+# convoviz/io/loaders.py
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-19
 """Loading functions for conversations and collections."""
 
 import logging
@@ -159,6 +161,16 @@ def load_collection_from_json(filepath: Path | str) -> ConversationCollection:
     # Handle case where export is wrapped in a top-level object
     if isinstance(data, dict) and "conversations" in data:
         data = data["conversations"]
+
+    if isinstance(data, list):
+        empty_placeholder_count = sum(item == {} for item in data)
+        if empty_placeholder_count:
+            logger.warning(
+                "Skipping %d empty conversation placeholder(s) in %s",
+                empty_placeholder_count,
+                filepath,
+            )
+            data = [item for item in data if item != {}]
 
     return ConversationCollection(conversations=data, source_paths=[filepath.parent])
 

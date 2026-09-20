@@ -1,3 +1,5 @@
+# tests/test_attachment_renaming.py
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Tests for attachment renaming functionality."""
 
 from pathlib import Path
@@ -180,7 +182,7 @@ def test_copy_asset_sanitizes_name(tmp_path: Path) -> None:
     assert (dest_dir / "assets" / sanitized_name).exists()
 
 
-def test_non_image_attachment_not_rendered() -> None:
+def test_non_image_attachment_rendered_as_file_link() -> None:
     """Non-image attachments should not be rendered as images."""
     content = MessageContent(content_type="text", text="Hello")
     metadata = MessageMetadata(
@@ -207,5 +209,145 @@ def test_non_image_attachment_not_rendered() -> None:
     headers = AuthorHeaders()
     result = render_node(node, headers, asset_resolver=mock_resolver)
 
-    assert resolver_calls == []
+    assert resolver_calls == [("file-999", "report.pdf")]
+    assert "[Attachment: report.pdf](assets/report.pdf)" in result
     assert "![Image]" not in result
+
+
+def test_resolved_non_image_attachment_has_no_missing_placeholder() -> None:
+    """Resolved ordinary files keep their existing link behavior."""
+    content = MessageContent(content_type="text", text="Hello")
+    metadata = MessageMetadata(
+        attachments=[
+            {"id": "file-100", "name": "report.pdf", "mime_type": "application/pdf"}
+        ]
+    )
+    message = Message(
+        id="msg-resolved",
+        author=MessageAuthor(role="user"),
+        content=content,
+        metadata=metadata,
+    )
+    node = Node(id="node-resolved", message=message, parent=None, children=[])
+
+    def mock_resolver(_asset_id: str, name: str | None = None) -> str | None:
+        return f"assets/{name}"
+
+    result = render_node(node, AuthorHeaders(), asset_resolver=mock_resolver)
+
+    assert "[Attachment: report.pdf](assets/report.pdf)" in result
+    assert "Missing attachment" not in result
+
+
+def test_unresolved_non_image_attachment_renders_placeholder() -> None:
+    """Unresolved ordinary files preserve exported filename and attachment ID."""
+    content = MessageContent(content_type="text", text="Hello")
+    metadata = MessageMetadata(
+        attachments=[
+            {"id": "file-101", "name": "missing.sql", "mime_type": "text/plain"}
+        ]
+    )
+    message = Message(
+        id="msg-missing",
+        author=MessageAuthor(role="user"),
+        content=content,
+        metadata=metadata,
+    )
+    node = Node(id="node-missing", message=message, parent=None, children=[])
+
+    def unresolved(_asset_id: str, _name: str | None = None) -> str | None:
+        return None
+
+    result = render_node(node, AuthorHeaders(), asset_resolver=unresolved)
+
+    assert (
+        "[Missing attachment: missing.sql \u2014 payload absent from OpenAI export]"
+        in result
+    )
+    assert "<!-- attachment_id=file-101 -->" in result
+
+
+def test_unresolved_non_image_attachment_without_name_uses_stable_fallback() -> None:
+    """Unnamed unresolved files remain visible through an ID-based fallback."""
+    content = MessageContent(content_type="text", text="Hello")
+    metadata = MessageMetadata(
+        attachments=[
+            {"id": "file-102", "name": "", "mime_type": "application/octet-stream"}
+        ]
+    )
+    message = Message(
+        id="msg-missing-name",
+        author=MessageAuthor(role="user"),
+        content=content,
+        metadata=metadata,
+    )
+    node = Node(id="node-missing-name", message=message, parent=None, children=[])
+
+    result = render_node(node, AuthorHeaders(), asset_resolver=lambda *_args: None)
+
+    assert (
+        "[Missing attachment: attachment file-102 \u2014 payload absent from OpenAI export]"
+        in result
+    )
+    assert "<!-- attachment_id=file-102 -->" in result
+
+
+def test_image_attachment_is_not_rendered_as_missing_file_placeholder() -> None:
+    """Image metadata stays deduplicated from generic file placeholders."""
+    content = MessageContent(
+        content_type="text",
+        parts=[
+            {
+                "content_type": "image_asset_pointer",
+                "asset_pointer": "file-service://file-image",
+            }
+        ],
+    )
+    metadata = MessageMetadata(
+        attachments=[
+            {"id": "file-image", "name": "photo.png", "mime_type": "image/png"}
+        ]
+    )
+    message = Message(
+        id="msg-image",
+        author=MessageAuthor(role="user"),
+        content=content,
+        metadata=metadata,
+    )
+    node = Node(id="node-image", message=message, parent=None, children=[])
+
+    result = render_node(node, AuthorHeaders(), asset_resolver=lambda *_args: None)
+
+    assert (
+        "[Missing image attachment: photo.png — payload absent from OpenAI export]"
+        in result
+    )
+    assert "<!-- attachment_id=file-image -->" in result
+    assert "[Missing attachment:" not in result
+
+
+def test_unresolved_non_image_attachment_without_resolver_is_deterministic() -> None:
+    """Missing resolver still yields a stable loss-visible placeholder."""
+    content = MessageContent(content_type="text", text="Hello")
+    metadata = MessageMetadata(
+        attachments=[
+            {"id": "file-103", "name": "orphan.txt", "mime_type": "text/plain"}
+        ]
+    )
+    message = Message(
+        id="msg-no-resolver",
+        author=MessageAuthor(role="user"),
+        content=content,
+        metadata=metadata,
+    )
+    node = Node(id="node-no-resolver", message=message, parent=None, children=[])
+
+    first = render_node(node, AuthorHeaders(), asset_resolver=None)
+    second = render_node(node, AuthorHeaders(), asset_resolver=None)
+
+    assert first == second
+    assert (
+        "[Missing attachment: orphan.txt \u2014 payload absent from OpenAI export]"
+        in first
+    )
+    assert "<!-- attachment_id=file-103 -->" in first

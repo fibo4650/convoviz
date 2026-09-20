@@ -1,3 +1,5 @@
+# convoviz/renderers/markdown.py
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Markdown rendering for conversations."""
 
 import re
@@ -89,6 +91,7 @@ def replace_citations(
                 {
                     "start": match.start(),
                     "keys": keys,
+                    "raw": match.group(0),
                     "replacement": "",
                 }
             )
@@ -122,9 +125,12 @@ def replace_citations(
             if not isinstance(data, dict):
                 continue
             marker = register_footnote(data.get("title"), data.get("url"))
-            if marker:
+            if marker and marker not in markers:
                 markers.append(marker)
-        entry["replacement"] = " ".join(markers)
+        replacement = " ".join(markers)
+        if len(markers) < len(entry["keys"]):
+            replacement = f"{replacement} {entry['raw']}".strip()
+        entry["replacement"] = replacement
 
     # Apply v4 replacements from end of string to start to keep indices stable.
     for entry in sorted(
@@ -374,8 +380,8 @@ def _render_images(
     message: Any,
     asset_resolver: Callable[[str, str | None], str | None] | None,
 ) -> str:
-    """Format images as markdown."""
-    if not asset_resolver or not message.images:
+    """Format images as markdown or visible missing-payload placeholders."""
+    if not message.images:
         return ""
 
     attachment_map = {}
@@ -389,11 +395,44 @@ def _render_images(
     image_markdown = []
     for image_id in message.images:
         target_name = attachment_map.get(image_id)
-        if rel_path := asset_resolver(image_id, target_name):
+        rel_path = asset_resolver(image_id, target_name) if asset_resolver else None
+        if rel_path:
             encoded_path = quote(rel_path)
             image_markdown.append(f"\n![Image]({encoded_path})\n")
+            continue
+
+        label = target_name or f"image {image_id}"
+        missing_label = f"[Missing image attachment: {label} — "
+        missing_label += "payload absent from OpenAI export]"
+        image_markdown.append(
+            f"\n{missing_label}\n<!-- attachment_id={image_id} -->\n"
+        )
 
     return "".join(image_markdown)
+
+
+def _render_files(
+    message: Any,
+    asset_resolver: Callable[[str, str | None], str | None] | None,
+) -> str:
+    """Format ordinary non-image attachments as links or missing placeholders."""
+    if not message.files:
+        return ""
+
+    file_markdown = []
+    for asset_id, target_name in message.files:
+        rel_path = asset_resolver(asset_id, target_name) if asset_resolver else None
+        if rel_path:
+            encoded_path = quote(rel_path)
+            label = target_name or asset_id
+            file_markdown.append(f"\n[Attachment: {label}]({encoded_path})\n")
+            continue
+
+        label = target_name or f"attachment {asset_id}"
+        missing_label = f"[Missing attachment: {label} \u2014 "
+        missing_label += "payload absent from OpenAI export]"
+        file_markdown.append(f"\n{missing_label}\n<!-- attachment_id={asset_id} -->\n")
+    return "".join(file_markdown)
 
 
 def render_node(
@@ -403,6 +442,7 @@ def render_node(
     asset_resolver: Callable[[str, str | None], str | None] | None = None,
     flavor: str = "standard",
     citation_map: dict[str, dict[str, str | None]] | None = None,
+    fallback_citation_map: dict[str, dict[str, str | None]] | None = None,
     show_timestamp: bool = True,
     last_timestamp: datetime | None = None,
 ) -> str:
@@ -437,9 +477,20 @@ def render_node(
         text = ""
 
     # Process Citations
-    effective_map = (
-        citation_map if citation_map is not None else message.internal_citation_map
-    )
+    if citation_map is not None:
+        # Explicit caller-supplied maps retain their existing override semantics.
+        effective_map = citation_map
+    else:
+        # Current exports may reuse turn/ref keys across messages, so local
+        # definitions are authoritative. The conversation map is only a safe
+        # fallback for keys that are globally unambiguous and absent locally.
+        claimed_keys = message.internal_citation_claimed_keys
+        effective_map = {
+            key: metadata
+            for key, metadata in (fallback_citation_map or {}).items()
+            if key not in claimed_keys
+        }
+        effective_map.update(message.internal_citation_map)
     citation_footnotes: list[str] = []
     if message.metadata.citations or effective_map:
         text, citation_footnotes = replace_citations(
@@ -456,11 +507,12 @@ def render_node(
             content = replace_latex_delimiters(content)
 
     images = _render_images(message, asset_resolver)
+    files = _render_files(message, asset_resolver)
     footnotes = ""
     if citation_footnotes:
         footnotes = "\n" + "\n".join(citation_footnotes) + "\n"
 
-    return f"\n{header}{timestamp}{content}{images}{footnotes}\n***\n"
+    return f"\n{header}{timestamp}{content}{images}{files}{footnotes}\n***\n"
 
 
 def _ordered_nodes_full(conversation: Conversation) -> list[Node]:
@@ -529,8 +581,11 @@ def render_conversation(
     markdown = yaml_header
     markdown += f"<!-- conversation_id={conversation.conversation_id} -->\n"
 
-    # Pre-calculate citation map for the conversation
-    citation_map = conversation.citation_map
+    # Resolve embedded citations per message. Current exports can reuse the same
+    # turn/ref token for different sources elsewhere in the conversation, while
+    # older exports can define a visible message's citation in a separate tool
+    # message. The aggregate map omits ambiguous keys and is fallback-only.
+    fallback_citation_map = conversation.citation_map
 
     # Render message nodes based on configured order.
     last_timestamp = None
@@ -547,7 +602,7 @@ def render_conversation(
                 use_dollar_latex,
                 asset_resolver=asset_resolver,
                 flavor=flavor,
-                citation_map=citation_map,
+                fallback_citation_map=fallback_citation_map,
                 show_timestamp=show_timestamp,
                 last_timestamp=last_timestamp,
             )

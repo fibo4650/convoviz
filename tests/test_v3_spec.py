@@ -1,3 +1,5 @@
+# tests/test_v3_spec.py
+# GPT-5.6 Sol | CONVOVIZ-FORK-FIDELITY-FIX-20260913 | 2026-09-14
 from datetime import datetime
 
 from convoviz.config import YAMLConfig
@@ -158,6 +160,27 @@ class TestCitationParsing:
 
         rendered_text, footnotes = replace_citations(text, citation_map=citation_map)
         assert rendered_text == "First [^1] then again [^1]"
+        assert footnotes == ["[^1]: [S1](http://s1.com)"]
+
+    def test_unresolved_embedded_citation_is_preserved(self):
+        marker = "\ue200cite\ue202turn9view0\ue201"
+        text = f"Unknown source {marker}."
+        citation_map = {
+            "turn0search0": {"title": "Other", "url": "http://other.test"},
+        }
+
+        rendered_text, footnotes = replace_citations(text, citation_map=citation_map)
+
+        assert rendered_text == text
+        assert footnotes == []
+
+    def test_partially_resolved_embedded_citation_preserves_raw_marker(self):
+        marker = "\ue200cite\ue202key1\ue202missing\ue201"
+        citation_map = {"key1": {"title": "S1", "url": "http://s1.com"}}
+
+        rendered_text, footnotes = replace_citations(marker, citation_map=citation_map)
+
+        assert rendered_text == f"[^1] {marker}"
         assert footnotes == ["[^1]: [S1](http://s1.com)"]
 
     def test_replace_citations_obsidian_format(self):

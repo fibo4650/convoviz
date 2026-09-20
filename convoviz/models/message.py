@@ -1,3 +1,5 @@
+# convoviz/models/message.py
+# GPT-5.6 Sol | CONVOVIZ-FORK-FIDELITY-FIX-20260913 | 2026-09-14
 """Message model - pure data class.
 
 Object path: conversations.json -> conversation -> mapping -> mapping node -> message
@@ -11,7 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from convoviz.exceptions import MessageContentError
 from convoviz.message_logic import (
     extract_canvas_document,
+    extract_internal_citation_claimed_keys,
     extract_internal_citation_map,
+    extract_message_files,
     extract_message_images,
     extract_message_text,
     is_message_hidden,
@@ -53,6 +57,7 @@ class MessageMetadata(BaseModel):
     user_context_message_data: dict[str, Any] | None = None
     citations: list[dict[str, Any]] | None = None
     search_result_groups: list[dict[str, Any]] | None = None
+    content_references: list[dict[str, Any]] | None = None
     attachments: list[dict[str, Any]] | None = None
 
     model_config = ConfigDict(protected_namespaces=())
@@ -82,6 +87,11 @@ class Message(BaseModel):
         return extract_message_images(self)
 
     @property
+    def files(self) -> list[tuple[str, str | None]]:
+        """Extract ordinary non-image file attachments."""
+        return extract_message_files(self)
+
+    @property
     def text(self) -> str:
         """Extract the text content of the message."""
         return extract_message_text(self)
@@ -95,13 +105,14 @@ class Message(BaseModel):
             or self.content.result is not None
             or self.content.content is not None  # reasoning_recap
             or self.content.thoughts is not None  # o1/o3 thoughts
+            or bool(self.files)
         )
 
     @property
     def is_empty(self) -> bool:
-        """Check if the message is effectively empty (no text, no images)."""
+        """Check if the message is effectively empty (no text, images, or files)."""
         try:
-            return not self.text.strip() and not self.images
+            return not self.text.strip() and not self.images and not self.files
         except MessageContentError:
             return True
 
@@ -135,3 +146,13 @@ class Message(BaseModel):
         Key format: "turn{turn_index}search{ref_index}"
         """
         return extract_internal_citation_map(self)
+
+    @property
+    def internal_citation_claimed_keys(self) -> set[str]:
+        """Return citation keys claimed by this message, including ambiguous ones."""
+        return extract_internal_citation_claimed_keys(self)
+
+    @property
+    def internal_citation_unresolved_keys(self) -> set[str]:
+        """Return locally claimed citation keys intentionally left unresolved."""
+        return self.internal_citation_claimed_keys - set(self.internal_citation_map)

@@ -1,3 +1,5 @@
+# tests/test_loaders.py
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-19
 """Tests for the io/loaders module."""
 
 import json
@@ -8,6 +10,7 @@ from zipfile import ZipFile, ZipInfo
 
 import orjson
 import pytest
+from pydantic import ValidationError
 
 from convoviz.exceptions import InvalidZipError
 from convoviz.io.loaders import (
@@ -104,6 +107,31 @@ class TestLoadCollectionFromJson:
         json_path.write_text("{not: valid", encoding="utf-8")
 
         with pytest.raises(orjson.JSONDecodeError):
+            load_collection_from_json(json_path)
+
+    def test_skips_exact_empty_conversation_placeholder(
+        self, mock_conversation_data: dict, tmp_path: Path
+    ) -> None:
+        """An exact empty object is an ignorable provider placeholder."""
+        json_path = tmp_path / "empty-placeholder.json"
+        json_path.write_text(json.dumps([mock_conversation_data, {}]), encoding="utf-8")
+
+        collection = load_collection_from_json(json_path)
+
+        assert len(collection.conversations) == 1
+        assert collection.conversations[0].conversation_id == "conversation_111"
+
+    def test_partially_malformed_conversation_still_raises(
+        self, mock_conversation_data: dict, tmp_path: Path
+    ) -> None:
+        """Nonempty malformed records must remain fail-closed."""
+        json_path = tmp_path / "partial-conversation.json"
+        json_path.write_text(
+            json.dumps([mock_conversation_data, {"conversation_id": "partial"}]),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValidationError):
             load_collection_from_json(json_path)
 
 

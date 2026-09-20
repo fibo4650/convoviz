@@ -1,3 +1,5 @@
+# tests/test_writers.py
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Tests for the writers module."""
 
 from datetime import UTC, datetime
@@ -484,3 +486,113 @@ class TestSaveConversation:
         assert result == filepath
         assert "Something Else" in filepath.read_text()
         assert "Hello" not in filepath.read_text()
+
+
+def test_save_collection_renames_by_stable_identity(tmp_path: Path) -> None:
+    """A title change moves the stable ID instead of leaving a duplicate."""
+    ts = datetime(2024, 1, 5, 10, 0, tzinfo=UTC)
+    old = create_conversation("Old title", ts, "stable-id")
+    save_collection(
+        ConversationCollection(conversations=[old]),
+        tmp_path,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+    renamed = create_conversation("New title", ts, "stable-id")
+    save_collection(
+        ConversationCollection(conversations=[renamed]),
+        tmp_path,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+    assert not (tmp_path / "Old title.md").exists()
+    assert (tmp_path / "New title.md").exists()
+    notes = [p for p in tmp_path.glob("*.md") if p.name != "_index.md"]
+    assert len(notes) == 1
+
+
+def test_save_collection_rename_respects_same_title_collision(tmp_path: Path) -> None:
+    """Renaming into another ID's title keeps both conversations once."""
+    ts = datetime(2024, 1, 5, 10, 0, tzinfo=UTC)
+    first = create_conversation("Old title", ts, "id-1")
+    second = create_conversation("Taken", ts, "id-2")
+    save_collection(
+        ConversationCollection(conversations=[first, second]),
+        tmp_path,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+    renamed = create_conversation("Taken", ts, "id-1")
+    save_collection(
+        ConversationCollection(conversations=[renamed, second]),
+        tmp_path,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+    assert not (tmp_path / "Old title.md").exists()
+    assert (tmp_path / "Taken.md").exists()
+    assert (tmp_path / "Taken (1).md").exists()
+    notes = [p for p in tmp_path.glob("*.md") if p.name != "_index.md"]
+    assert len(notes) == 2
+
+
+def test_save_collection_does_not_delete_omitted_conversations(tmp_path: Path) -> None:
+    """A later partial export must not delete an ID that is absent from it."""
+    ts = datetime(2024, 1, 5, 10, 0, tzinfo=UTC)
+    keep = create_conversation("Keep", ts, "keep-id")
+    update = create_conversation("Update", ts, "update-id")
+    save_collection(
+        ConversationCollection(conversations=[keep, update]),
+        tmp_path,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+    renamed = create_conversation("Updated", ts, "update-id")
+    save_collection(
+        ConversationCollection(conversations=[renamed]),
+        tmp_path,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+    assert (tmp_path / "Keep.md").exists()
+    assert not (tmp_path / "Update.md").exists()
+    assert (tmp_path / "Updated.md").exists()
+
+
+def test_rename_cleanup_preserves_unowned_markdown_with_matching_chat_link(
+    tmp_path: Path,
+) -> None:
+    """Only Convoviz-owned marker files may be removed during rename cleanup."""
+    ts = datetime(2024, 1, 5, 10, 0, tzinfo=UTC)
+    original = create_conversation("Old title", ts, "stable-id")
+    save_collection(
+        ConversationCollection(conversations=[original]),
+        tmp_path,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+
+    manual = tmp_path / "Manual note.md"
+    manual.write_text(
+        '---\nchat_link: "https://chatgpt.com/c/stable-id"\n---\nManual context\n',
+        encoding="utf-8",
+    )
+    nested = tmp_path / "assets" / "copied-note.md"
+    nested.parent.mkdir()
+    nested.write_text(
+        '---\nchat_link: "https://chatgpt.com/c/stable-id"\n---\nNested copy\n',
+        encoding="utf-8",
+    )
+
+    renamed = create_conversation("New title", ts, "stable-id")
+    save_collection(
+        ConversationCollection(conversations=[renamed]),
+        tmp_path,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+
+    assert not (tmp_path / "Old title.md").exists()
+    assert (tmp_path / "New title.md").exists()
+    assert manual.read_text(encoding="utf-8").endswith("Manual context\n")
+    assert nested.read_text(encoding="utf-8").endswith("Nested copy\n")

@@ -1,3 +1,5 @@
+# convoviz/io/writers.py
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Writing functions for conversations and collections."""
 
 import logging
@@ -70,37 +72,37 @@ _ID_SCAN_LIMIT = 128 * 1024
 
 
 def _get_conversation_id_from_file(filepath: Path) -> str | None:
-    """Extract conversation_id from an existing markdown file's YAML frontmatter.
+    """Extract a Convoviz-owned conversation ID from its hidden marker.
 
-    Scans a bounded prefix of the file to avoid loading huge files.
+    Destructive overwrite/rename cleanup must never infer ownership from generic
+    YAML fields or chat links because unrelated Markdown may contain them.
     """
     try:
         with filepath.open("r", encoding="utf-8") as f:
             content = f.read(_ID_SCAN_LIMIT)
-
-        # Check hidden marker first
         marker = re.search(
             r"<!--\s*conversation_id=([^>\s]+)\s*-->",
             content,
             re.IGNORECASE,
         )
-        if marker:
-            return marker.group(1)
-        # Look for conversation_id: "id"
-        match = re.search(r'^conversation_id:\s*"([^"]+)"', content, re.MULTILINE)
-        if match:
-            return match.group(1)
-        # Fallback: check chat_link
-        match = re.search(
-            r'^chat_link:\s*"https://(?:chatgpt\.com|chat\.openai\.com)/c/([^"]+)"',
-            content,
-            re.MULTILINE,
-        )
-        if match:
-            return match.group(1)
+        return marker.group(1) if marker else None
     except Exception:
-        pass
-    return None
+        return None
+
+
+def _index_existing_conversation_files(directory: Path) -> dict[str, list[Path]]:
+    """Index existing conversation notes by stable conversation ID."""
+    indexed: dict[str, list[Path]] = {}
+    if not directory.exists():
+        return indexed
+
+    for path in directory.rglob("*.md"):
+        if path.name == "_index.md":
+            continue
+        conversation_id = _get_conversation_id_from_file(path)
+        if conversation_id:
+            indexed.setdefault(conversation_id, []).append(path)
+    return indexed
 
 
 def _build_markdown_filename(
@@ -134,6 +136,7 @@ def save_conversation(
     headers: AuthorHeaders,
     source_paths: list[Path] | None = None,
     asset_indexes: dict[Path, AssetIndex] | None = None,
+    existing_paths: list[Path] | None = None,
 ) -> Path:
     """Save a conversation to a markdown file.
 
@@ -191,6 +194,15 @@ def save_conversation(
     # Set modification time
     timestamp = conversation.update_time.timestamp()
     os_utime(final_path, (timestamp, timestamp))
+
+    # A title change can move a stable conversation ID to a new filename.
+    # Remove only stale notes that still prove they belong to this same ID.
+    for stale_path in existing_paths or []:
+        if stale_path == final_path or not stale_path.exists():
+            continue
+        if _get_conversation_id_from_file(stale_path) == conversation.conversation_id:
+            stale_path.unlink()
+            logger.debug(f"Removed stale renamed conversation: {stale_path}")
 
     return final_path
 
@@ -309,6 +321,7 @@ def save_collection(
 
     """
     directory.mkdir(parents=True, exist_ok=True)
+    existing_by_id = _index_existing_conversation_files(directory)
 
     asset_indexes: dict[Path, AssetIndex] | None = None
     if collection.source_paths:
@@ -348,7 +361,9 @@ def save_collection(
             headers,
             source_paths=collection.source_paths,
             asset_indexes=asset_indexes,
+            existing_paths=existing_by_id.get(conv.conversation_id, []),
         )
+        existing_by_id[conv.conversation_id] = [saved_path]
 
         # Update title mapping with the FINAL filename (after deduplication)
         rel_path = saved_path.relative_to(directory)
