@@ -484,7 +484,12 @@ def render_node(
         # Current exports may reuse turn/ref keys across messages, so local
         # definitions are authoritative. The conversation map is only a safe
         # fallback for keys that are globally unambiguous and absent locally.
-        effective_map = dict(fallback_citation_map or {})
+        claimed_keys = message.internal_citation_claimed_keys
+        effective_map = {
+            key: metadata
+            for key, metadata in (fallback_citation_map or {}).items()
+            if key not in claimed_keys
+        }
         effective_map.update(message.internal_citation_map)
     citation_footnotes: list[str] = []
     if message.metadata.citations or effective_map:

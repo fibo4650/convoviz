@@ -302,14 +302,15 @@ def is_message_hidden(message: Message) -> bool:
     )
 
 
-def extract_internal_citation_map(message: Message) -> dict[str, dict[str, str | None]]:
-    """Extract only unambiguous embedded citation IDs for one message.
+def extract_internal_citation_state(
+    message: Message,
+) -> tuple[dict[str, dict[str, str | None]], set[str]]:
+    """Extract resolved citation metadata plus every locally claimed citation key.
 
-    Current exports can reuse the same turn/ref token for different sources, even
-    inside one message. Conflicting primary definitions are therefore omitted so
-    the renderer preserves the raw citation marker instead of misattributing it.
-    Fallback metadata may fill an otherwise unknown key but never overrides a
-    primary definition, regardless of metadata ordering.
+    A claimed key can be absent from the resolved map when local metadata is
+    ambiguous. Callers must preserve that distinction so a conversation-level
+    fallback cannot silently resolve a key the current message intentionally
+    left unresolved.
     """
     primary_candidates: dict[str, dict[str, str | None]] = {}
     fallback_candidates: dict[str, dict[str, str | None]] = {}
@@ -402,4 +403,18 @@ def extract_internal_citation_map(message: Message) -> dict[str, dict[str, str |
             and key not in result
         ):
             result[key] = metadata
-    return result
+
+    claimed_keys = set(primary_candidates) | set(fallback_candidates)
+    return result, claimed_keys
+
+
+def extract_internal_citation_map(
+    message: Message,
+) -> dict[str, dict[str, str | None]]:
+    """Extract only unambiguous embedded citation IDs for one message."""
+    return extract_internal_citation_state(message)[0]
+
+
+def extract_internal_citation_claimed_keys(message: Message) -> set[str]:
+    """Return citation keys mentioned by local metadata, resolved or ambiguous."""
+    return extract_internal_citation_state(message)[1]

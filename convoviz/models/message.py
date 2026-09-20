@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from convoviz.exceptions import MessageContentError
 from convoviz.message_logic import (
     extract_canvas_document,
+    extract_internal_citation_claimed_keys,
     extract_internal_citation_map,
     extract_message_files,
     extract_message_images,
@@ -145,3 +146,13 @@ class Message(BaseModel):
         Key format: "turn{turn_index}search{ref_index}"
         """
         return extract_internal_citation_map(self)
+
+    @property
+    def internal_citation_claimed_keys(self) -> set[str]:
+        """Return citation keys claimed by this message, including ambiguous ones."""
+        return extract_internal_citation_claimed_keys(self)
+
+    @property
+    def internal_citation_unresolved_keys(self) -> set[str]:
+        """Return locally claimed citation keys intentionally left unresolved."""
+        return self.internal_citation_claimed_keys - set(self.internal_citation_map)

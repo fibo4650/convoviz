@@ -625,6 +625,115 @@ def test_render_conversation_uses_unambiguous_tool_citation_as_fallback() -> Non
 
 
 
+
+def test_render_conversation_local_ambiguity_masks_tool_fallback() -> None:
+    """Ambiguous local metadata must not be filled by another message's fallback."""
+    ts = datetime(2024, 1, 1).timestamp()
+    marker = "\ue200cite\ue202turn0search0\ue201"
+    ref = {"ref_type": "search", "turn_index": 0, "ref_index": 0}
+
+    conversation = Conversation(
+        title="Ambiguous local citation masks fallback",
+        create_time=ts,
+        update_time=ts,
+        mapping={
+            "root": {
+                "id": "root",
+                "message": None,
+                "parent": None,
+                "children": ["tool"],
+            },
+            "tool": {
+                "id": "tool",
+                "message": {
+                    "id": "tool",
+                    "author": {"role": "tool", "metadata": {}},
+                    "create_time": ts,
+                    "update_time": ts,
+                    "content": {"content_type": "text", "parts": [""]},
+                    "status": "finished_successfully",
+                    "end_turn": False,
+                    "weight": 1.0,
+                    "metadata": {
+                        "search_result_groups": [
+                            {
+                                "entries": [
+                                    {
+                                        "ref_id": ref,
+                                        "title": "Tool Source",
+                                        "url": "https://example.com/tool",
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "recipient": "all",
+                },
+                "parent": "root",
+                "children": ["assistant"],
+            },
+            "assistant": {
+                "id": "assistant",
+                "message": {
+                    "id": "assistant",
+                    "author": {"role": "assistant", "metadata": {}},
+                    "create_time": ts,
+                    "update_time": ts,
+                    "content": {
+                        "content_type": "text",
+                        "parts": [f"Ambiguous claim {marker}"],
+                    },
+                    "status": "finished_successfully",
+                    "end_turn": True,
+                    "weight": 1.0,
+                    "metadata": {
+                        "search_result_groups": [
+                            {
+                                "entries": [
+                                    {
+                                        "ref_id": ref,
+                                        "title": "Source A",
+                                        "url": "https://example.com/a",
+                                    },
+                                    {
+                                        "ref_id": ref,
+                                        "title": "Source B",
+                                        "url": "https://example.com/b",
+                                    },
+                                ]
+                            }
+                        ]
+                    },
+                    "recipient": "all",
+                },
+                "parent": "tool",
+                "children": [],
+            },
+        },
+        current_node="assistant",
+        conversation_id="ambiguous-local-masks-fallback",
+    )
+
+    assistant = conversation.mapping["assistant"].message
+    assert assistant is not None
+    assert "turn0search0" in assistant.internal_citation_claimed_keys
+    assert "turn0search0" in assistant.internal_citation_unresolved_keys
+    assert "turn0search0" not in assistant.internal_citation_map
+    assert conversation.citation_map["turn0search0"]["title"] == "Tool Source"
+
+    rendered = render_conversation(
+        conversation,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+
+    assert marker in rendered
+    assert "Tool Source" not in rendered
+    assert "Source A" not in rendered
+    assert "Source B" not in rendered
+
+
+
 def test_render_node_preserves_ambiguous_embedded_citation_marker() -> None:
     """Conflicting current-export metadata must stay loss-visible."""
     marker = "\ue200cite\ue202turn0search0\ue201"
