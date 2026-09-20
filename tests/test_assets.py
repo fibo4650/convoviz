@@ -1,3 +1,5 @@
+# tests/test_assets.py
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Tests for asset management functions."""
 
 from pathlib import Path
@@ -137,6 +139,24 @@ class TestCopyAsset:
         # New file should be created with a distinct name
         assert rel_path == "assets/image (1).png"
         assert (assets_dir / "image (1).png").read_bytes() == b"NEW"
+
+    def test_copy_failure_returns_none_and_removes_partial(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A failed copy must not claim a Markdown destination exists."""
+        src_file = tmp_path / "image.png"
+        src_file.write_bytes(b"source")
+        dest_dir = tmp_path / "output"
+        dest_dir.mkdir()
+
+        def fail_copy(_source: Path, destination: Path) -> None:
+            destination.write_bytes(b"partial")
+            raise OSError("simulated copy failure")
+
+        monkeypatch.setattr("convoviz.io.assets.shutil.copy2", fail_copy)
+
+        assert copy_asset(src_file, dest_dir) is None
+        assert not (dest_dir / "assets" / "image.png").exists()
 
     def test_reuses_existing_when_identical(self, tmp_path: Path) -> None:
         src_file = tmp_path / "image.png"

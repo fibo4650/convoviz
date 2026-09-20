@@ -1,5 +1,5 @@
 # convoviz/message_logic.py
-# GPT-5.6 Sol | CONVOVIZ-FORK-FIDELITY-FIX-20260913 | 2026-09-14
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Message interpretation utilities.
 
 Keeps complex extraction and visibility rules outside of pure data models.
@@ -303,8 +303,18 @@ def is_message_hidden(message: Message) -> bool:
 
 
 def extract_internal_citation_map(message: Message) -> dict[str, dict[str, str | None]]:
-    """Extract embedded citation IDs from legacy and current export metadata."""
-    citation_mapping: dict[str, dict[str, str | None]] = {}
+    """Extract only unambiguous embedded citation IDs for one message.
+
+    Current exports can reuse the same turn/ref token for different sources, even
+    inside one message. Conflicting primary definitions are therefore omitted so
+    the renderer preserves the raw citation marker instead of misattributing it.
+    Fallback metadata may fill an otherwise unknown key but never overrides a
+    primary definition, regardless of metadata ordering.
+    """
+    primary_candidates: dict[str, dict[str, str | None]] = {}
+    fallback_candidates: dict[str, dict[str, str | None]] = {}
+    ambiguous_primary: set[str] = set()
+    ambiguous_fallback: set[str] = set()
     parts = message.content.parts or []
 
     def ref_key(ref_id: Any) -> str | None:
@@ -319,15 +329,32 @@ def extract_internal_citation_map(message: Message) -> dict[str, dict[str, str |
             return None
         return f"turn{turn_idx}{ref_type}{ref_idx}"
 
+    def add_candidate(
+        key: str,
+        metadata: dict[str, str | None],
+        *,
+        fallback: bool = False,
+    ) -> None:
+        target = fallback_candidates if fallback else primary_candidates
+        ambiguous = ambiguous_fallback if fallback else ambiguous_primary
+        existing = target.get(key)
+        if existing is None:
+            target[key] = metadata
+        elif existing != metadata:
+            ambiguous.add(key)
+
     def process_entry(entry: Any) -> None:
         if not isinstance(entry, dict):
             return
         key = ref_key(entry.get("ref_id"))
         if key:
-            citation_mapping[key] = {
-                "title": entry.get("title"),
-                "url": entry.get("url"),
-            }
+            add_candidate(
+                key,
+                {
+                    "title": entry.get("title"),
+                    "url": entry.get("url"),
+                },
+            )
 
     for part in parts:
         if isinstance(part, dict):
@@ -348,15 +375,31 @@ def extract_internal_citation_map(message: Message) -> dict[str, dict[str, str |
             or reference.get("type") != "grouped_webpages"
         ):
             continue
-        items = list(reference.get("items") or []) + list(
-            reference.get("fallback_items") or []
-        )
-        for item in items:
+        for item in reference.get("items") or []:
             if not isinstance(item, dict):
                 continue
             metadata = {"title": item.get("title"), "url": item.get("url")}
             for ref_id in item.get("refs") or []:
                 if key := ref_key(ref_id):
-                    citation_mapping[key] = metadata
+                    add_candidate(key, metadata)
+        for item in reference.get("fallback_items") or []:
+            if not isinstance(item, dict):
+                continue
+            metadata = {"title": item.get("title"), "url": item.get("url")}
+            for ref_id in item.get("refs") or []:
+                if key := ref_key(ref_id):
+                    add_candidate(key, metadata, fallback=True)
 
-    return citation_mapping
+    result = {
+        key: metadata
+        for key, metadata in primary_candidates.items()
+        if key not in ambiguous_primary
+    }
+    for key, metadata in fallback_candidates.items():
+        if (
+            key not in primary_candidates
+            and key not in ambiguous_fallback
+            and key not in result
+        ):
+            result[key] = metadata
+    return result

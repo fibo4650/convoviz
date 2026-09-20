@@ -1,3 +1,5 @@
+# convoviz/models/conversation.py
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Conversation model - pure data class.
 
 Object path: conversations.json -> conversation (one of the list items)
@@ -231,10 +233,19 @@ class Conversation(BaseModel):
         Traverses all nodes (including hidden ones) to collect embedded
         citation definitions from tool outputs (e.g. search results).
         """
-        aggregated_map = {}
+        aggregated_map: dict[str, dict[str, str | None]] = {}
+        ambiguous_keys: set[str] = set()
         for node in self.all_message_nodes:
             if not node.message:
                 continue
-            # Extract citations from message parts
-            aggregated_map.update(node.message.internal_citation_map)
-        return aggregated_map
+            for key, metadata in node.message.internal_citation_map.items():
+                existing = aggregated_map.get(key)
+                if existing is None:
+                    aggregated_map[key] = metadata
+                elif existing != metadata:
+                    ambiguous_keys.add(key)
+        return {
+            key: metadata
+            for key, metadata in aggregated_map.items()
+            if key not in ambiguous_keys
+        }

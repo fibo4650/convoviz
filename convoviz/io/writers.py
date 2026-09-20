@@ -1,5 +1,5 @@
 # convoviz/io/writers.py
-# GPT-5.6 Sol | CONVOVIZ-FORK-FIDELITY-FIX-20260913 | 2026-09-14
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Writing functions for conversations and collections."""
 
 import logging
@@ -72,37 +72,22 @@ _ID_SCAN_LIMIT = 128 * 1024
 
 
 def _get_conversation_id_from_file(filepath: Path) -> str | None:
-    """Extract conversation_id from an existing markdown file's YAML frontmatter.
+    """Extract a Convoviz-owned conversation ID from its hidden marker.
 
-    Scans a bounded prefix of the file to avoid loading huge files.
+    Destructive overwrite/rename cleanup must never infer ownership from generic
+    YAML fields or chat links because unrelated Markdown may contain them.
     """
     try:
         with filepath.open("r", encoding="utf-8") as f:
             content = f.read(_ID_SCAN_LIMIT)
-
-        # Check hidden marker first
         marker = re.search(
             r"<!--\s*conversation_id=([^>\s]+)\s*-->",
             content,
             re.IGNORECASE,
         )
-        if marker:
-            return marker.group(1)
-        # Look for conversation_id: "id"
-        match = re.search(r'^conversation_id:\s*"([^"]+)"', content, re.MULTILINE)
-        if match:
-            return match.group(1)
-        # Fallback: check chat_link
-        match = re.search(
-            r'^chat_link:\s*"https://(?:chatgpt\.com|chat\.openai\.com)/c/([^"]+)"',
-            content,
-            re.MULTILINE,
-        )
-        if match:
-            return match.group(1)
+        return marker.group(1) if marker else None
     except Exception:
-        pass
-    return None
+        return None
 
 
 def _index_existing_conversation_files(directory: Path) -> dict[str, list[Path]]:

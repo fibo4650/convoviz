@@ -1,3 +1,5 @@
+# convoviz/io/assets.py
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Asset management functions."""
 
 import hashlib
@@ -260,7 +262,7 @@ def copy_asset(
     source_path: Path,
     dest_dir: Path,
     target_name: str | None = None,
-) -> str:
+) -> str | None:
     """Copy an asset to the destination directory.
 
     Args:
@@ -283,6 +285,11 @@ def copy_asset(
             logger.debug(f"Copied asset: {source_path.name} -> {dest_path.name}")
         except Exception as e:
             logger.warning(f"Failed to copy asset {source_path}: {e}")
+            try:
+                dest_path.unlink(missing_ok=True)
+            except Exception:
+                logger.debug(f"Could not remove partial asset: {dest_path}")
+            return None
 
     # Return forward-slash path for Markdown compatibility even on Windows
     return f"assets/{dest_path.name}"

@@ -1,5 +1,5 @@
 # convoviz/renderers/markdown.py
-# GPT-5.6 Sol | CONVOVIZ-FORK-MISSING-ATTACHMENT-FIX-20260914 | 2026-09-14
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Markdown rendering for conversations."""
 
 import re
@@ -125,7 +125,7 @@ def replace_citations(
             if not isinstance(data, dict):
                 continue
             marker = register_footnote(data.get("title"), data.get("url"))
-            if marker:
+            if marker and marker not in markers:
                 markers.append(marker)
         replacement = " ".join(markers)
         if len(markers) < len(entry["keys"]):
@@ -380,8 +380,8 @@ def _render_images(
     message: Any,
     asset_resolver: Callable[[str, str | None], str | None] | None,
 ) -> str:
-    """Format images as markdown."""
-    if not asset_resolver or not message.images:
+    """Format images as markdown or visible missing-payload placeholders."""
+    if not message.images:
         return ""
 
     attachment_map = {}
@@ -395,9 +395,18 @@ def _render_images(
     image_markdown = []
     for image_id in message.images:
         target_name = attachment_map.get(image_id)
-        if rel_path := asset_resolver(image_id, target_name):
+        rel_path = asset_resolver(image_id, target_name) if asset_resolver else None
+        if rel_path:
             encoded_path = quote(rel_path)
             image_markdown.append(f"\n![Image]({encoded_path})\n")
+            continue
+
+        label = target_name or f"image {image_id}"
+        missing_label = f"[Missing image attachment: {label} — "
+        missing_label += "payload absent from OpenAI export]"
+        image_markdown.append(
+            f"\n{missing_label}\n<!-- attachment_id={image_id} -->\n"
+        )
 
     return "".join(image_markdown)
 
@@ -560,9 +569,8 @@ def render_conversation(
     markdown = yaml_header
     markdown += f"<!-- conversation_id={conversation.conversation_id} -->\n"
 
-    # Pre-calculate citation map for the conversation
-    citation_map = conversation.citation_map
-
+    # Resolve embedded citations per message. Current exports can reuse the same
+    # turn/ref token for different sources elsewhere in the conversation.
     # Render message nodes based on configured order.
     last_timestamp = None
     if config.markdown.render_order == "active":
@@ -578,7 +586,6 @@ def render_conversation(
                 use_dollar_latex,
                 asset_resolver=asset_resolver,
                 flavor=flavor,
-                citation_map=citation_map,
                 show_timestamp=show_timestamp,
                 last_timestamp=last_timestamp,
             )

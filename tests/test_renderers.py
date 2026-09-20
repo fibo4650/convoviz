@@ -1,3 +1,5 @@
+# tests/test_renderers.py
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Tests for the renderers module."""
 
 from datetime import datetime, timedelta
@@ -328,6 +330,44 @@ class TestRenderConversation:
 
         assert "![Image](assets/file-123.png)" in markdown
 
+    def test_unresolved_image_keeps_visible_source_evidence(
+        self,
+        mock_conversation: Conversation,
+    ) -> None:
+        """An unresolved image must retain its exported ID/name in Markdown."""
+        config = ConversationConfig()
+        headers = AuthorHeaders()
+        user_node = mock_conversation.nodes_by_author("user")[0]
+        user_node.message.content.parts = [
+            {
+                "content_type": "image_asset_pointer",
+                "asset_pointer": "file-service://file-missing",
+            },
+        ]
+        user_node.message.metadata.attachments = [
+            {"id": "file-missing", "name": "diagram.png"},
+        ]
+
+        unresolved = render_conversation(
+            mock_conversation,
+            config,
+            headers,
+            asset_resolver=lambda _asset_id, _name=None: None,
+        )
+        without_resolver = render_conversation(
+            mock_conversation,
+            config,
+            headers,
+        )
+
+        expected = (
+            "[Missing image attachment: diagram.png — "
+            "payload absent from OpenAI export]"
+        )
+        for markdown in (unresolved, without_resolver):
+            assert expected in markdown
+            assert "<!-- attachment_id=file-missing -->" in markdown
+
     def test_render_conversation_timestamps(
         self,
         mock_conversation: Conversation,
@@ -428,6 +468,128 @@ def test_render_node_respects_explicit_empty_citation_map() -> None:
     rendered = render_node(node, AuthorHeaders(), citation_map={})
     assert marker in rendered
     assert "[Source](https://example.com)" not in rendered
+
+
+
+def test_render_conversation_scopes_reused_citation_key_per_message() -> None:
+    """A citation token reused later must not rewrite an earlier message source."""
+    ts = datetime(2024, 1, 1).timestamp()
+    marker = "\ue200cite\ue202turn0search0\ue201"
+    ref = {"ref_type": "search", "turn_index": 0, "ref_index": 0}
+
+    def message(node_id: str, source: str, url: str, parent: str | None):
+        return {
+            "id": node_id,
+            "message": {
+                "id": node_id,
+                "author": {"role": "assistant", "metadata": {}},
+                "create_time": ts,
+                "update_time": ts,
+                "content": {"content_type": "text", "parts": [f"{source} {marker}"]},
+                "status": "finished_successfully",
+                "end_turn": True,
+                "weight": 1.0,
+                "metadata": {
+                    "content_references": [
+                        {
+                            "type": "grouped_webpages",
+                            "items": [
+                                {
+                                    "title": source,
+                                    "url": url,
+                                    "refs": [ref],
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "recipient": "all",
+            },
+            "parent": parent,
+            "children": [],
+        }
+
+    first = message("first", "Source A", "https://example.com/a", "root")
+    first["children"] = ["second"]
+    second = message("second", "Source B", "https://example.com/b", "first")
+    conversation = Conversation(
+        title="Scoped citations",
+        create_time=ts,
+        update_time=ts,
+        mapping={
+            "root": {
+                "id": "root",
+                "message": None,
+                "parent": None,
+                "children": ["first"],
+            },
+            "first": first,
+            "second": second,
+        },
+        current_node="second",
+        conversation_id="citation-scope",
+    )
+
+    rendered = render_conversation(
+        conversation,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+
+    assert "[^1]: [Source A](https://example.com/a)" in rendered
+    assert "[^1]: [Source B](https://example.com/b)" in rendered
+    assert marker not in rendered
+
+
+def test_render_node_preserves_ambiguous_embedded_citation_marker() -> None:
+    """Conflicting current-export metadata must stay loss-visible."""
+    marker = "\ue200cite\ue202turn0search0\ue201"
+    ref = {"ref_type": "search", "turn_index": 0, "ref_index": 0}
+    node = Node(
+        id="n1",
+        message={
+            "id": "m1",
+            "author": {"role": "assistant", "metadata": {}},
+            "create_time": datetime(2024, 1, 1).timestamp(),
+            "update_time": datetime(2024, 1, 1).timestamp(),
+            "content": {"content_type": "text", "parts": [f"Claim {marker}"]},
+            "status": "finished_successfully",
+            "end_turn": True,
+            "weight": 1.0,
+            "metadata": {
+                "content_references": [
+                    {
+                        "type": "grouped_webpages",
+                        "items": [
+                            {
+                                "title": "A",
+                                "url": "https://example.com/a",
+                                "refs": [ref],
+                            }
+                        ],
+                    },
+                    {
+                        "type": "grouped_webpages",
+                        "items": [
+                            {
+                                "title": "B",
+                                "url": "https://example.com/b",
+                                "refs": [ref],
+                            }
+                        ],
+                    },
+                ]
+            },
+            "recipient": "all",
+        },
+        parent=None,
+        children=[],
+    )
+
+    rendered = render_node(node, AuthorHeaders())
+    assert marker in rendered
+    assert "https://example.com/a" not in rendered
+    assert "https://example.com/b" not in rendered
 
 
 def test_render_node_puts_citation_footnotes_at_message_bottom() -> None:

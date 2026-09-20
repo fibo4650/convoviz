@@ -1,5 +1,5 @@
 # tests/test_models.py
-# GPT-5.6 Sol | CONVOVIZ-FORK-FIDELITY-FIX-20260913 | 2026-09-14
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Tests for the models."""
 
 import copy
@@ -145,6 +145,144 @@ def test_internal_citation_map_ignores_non_dict_ref_id() -> None:
         recipient="all",
     )
     assert msg.internal_citation_map == {}
+
+
+
+def test_internal_citation_map_drops_conflicting_primary_definition() -> None:
+    """A reused citation token with different sources must remain unresolved."""
+    msg = Message.model_validate(
+        {
+            "id": "msg",
+            "author": {"role": "assistant", "metadata": {}},
+            "content": {"content_type": "text", "parts": ["hello"]},
+            "metadata": {
+                "content_references": [
+                    {
+                        "type": "grouped_webpages",
+                        "items": [
+                            {
+                                "title": "Source A",
+                                "url": "https://example.com/a",
+                                "refs": [
+                                    {
+                                        "ref_type": "search",
+                                        "turn_index": 0,
+                                        "ref_index": 1,
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "type": "grouped_webpages",
+                        "items": [
+                            {
+                                "title": "Source B",
+                                "url": "https://example.com/b",
+                                "refs": [
+                                    {
+                                        "ref_type": "search",
+                                        "turn_index": 0,
+                                        "ref_index": 1,
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                ]
+            },
+        }
+    )
+    assert "turn0search1" not in msg.internal_citation_map
+
+
+def test_internal_citation_map_primary_beats_conflicting_fallback() -> None:
+    """Fallback metadata must never replace a primary grouped-webpage source."""
+    msg = Message.model_validate(
+        {
+            "id": "msg",
+            "author": {"role": "assistant", "metadata": {}},
+            "content": {"content_type": "text", "parts": ["hello"]},
+            "metadata": {
+                "content_references": [
+                    {
+                        "type": "grouped_webpages",
+                        "items": [
+                            {
+                                "title": "Primary",
+                                "url": "https://example.com/primary",
+                                "refs": [
+                                    {
+                                        "ref_type": "search",
+                                        "turn_index": 0,
+                                        "ref_index": 2,
+                                    }
+                                ],
+                            }
+                        ],
+                        "fallback_items": [
+                            {
+                                "title": "Fallback",
+                                "url": "https://example.com/fallback",
+                                "refs": [
+                                    {
+                                        "ref_type": "search",
+                                        "turn_index": 0,
+                                        "ref_index": 2,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+    assert msg.internal_citation_map["turn0search2"] == {
+        "title": "Primary",
+        "url": "https://example.com/primary",
+    }
+
+
+
+def test_internal_citation_map_later_primary_beats_earlier_fallback() -> None:
+    """Primary metadata wins even when an earlier reference exposed fallback first."""
+    ref = {"ref_type": "search", "turn_index": 0, "ref_index": 3}
+    msg = Message.model_validate(
+        {
+            "id": "msg",
+            "author": {"role": "assistant", "metadata": {}},
+            "content": {"content_type": "text", "parts": ["hello"]},
+            "metadata": {
+                "content_references": [
+                    {
+                        "type": "grouped_webpages",
+                        "fallback_items": [
+                            {
+                                "title": "Fallback",
+                                "url": "https://example.com/fallback",
+                                "refs": [ref],
+                            }
+                        ],
+                    },
+                    {
+                        "type": "grouped_webpages",
+                        "items": [
+                            {
+                                "title": "Primary",
+                                "url": "https://example.com/primary",
+                                "refs": [ref],
+                            }
+                        ],
+                    },
+                ]
+            },
+        }
+    )
+    assert msg.internal_citation_map["turn0search3"] == {
+        "title": "Primary",
+        "url": "https://example.com/primary",
+    }
 
 
 def test_message_missing_status_and_weight_uses_defaults() -> None:

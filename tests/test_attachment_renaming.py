@@ -1,5 +1,5 @@
 # tests/test_attachment_renaming.py
-# GPT-5.6 Sol | CONVOVIZ-FORK-MISSING-ATTACHMENT-FIX-20260914 | 2026-09-14
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Tests for attachment renaming functionality."""
 
 from pathlib import Path
@@ -318,8 +318,12 @@ def test_image_attachment_is_not_rendered_as_missing_file_placeholder() -> None:
 
     result = render_node(node, AuthorHeaders(), asset_resolver=lambda *_args: None)
 
-    assert "Missing attachment" not in result
-    assert "attachment_id=file-image" not in result
+    assert (
+        "[Missing image attachment: photo.png — payload absent from OpenAI export]"
+        in result
+    )
+    assert "<!-- attachment_id=file-image -->" in result
+    assert "[Missing attachment:" not in result
 
 
 def test_unresolved_non_image_attachment_without_resolver_is_deterministic() -> None:

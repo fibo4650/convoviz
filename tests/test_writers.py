@@ -1,5 +1,5 @@
 # tests/test_writers.py
-# GPT-5.6 Sol | CONVOVIZ-FORK-FIDELITY-FIX-20260913 | 2026-09-14
+# GPT-5.6 Sol | ChatGPT Export Vault Update | 2026-09-20
 """Tests for the writers module."""
 
 from datetime import UTC, datetime
@@ -557,3 +557,42 @@ def test_save_collection_does_not_delete_omitted_conversations(tmp_path: Path) -
     assert (tmp_path / "Keep.md").exists()
     assert not (tmp_path / "Update.md").exists()
     assert (tmp_path / "Updated.md").exists()
+
+
+def test_rename_cleanup_preserves_unowned_markdown_with_matching_chat_link(
+    tmp_path: Path,
+) -> None:
+    """Only Convoviz-owned marker files may be removed during rename cleanup."""
+    ts = datetime(2024, 1, 5, 10, 0, tzinfo=UTC)
+    original = create_conversation("Old title", ts, "stable-id")
+    save_collection(
+        ConversationCollection(conversations=[original]),
+        tmp_path,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+
+    manual = tmp_path / "Manual note.md"
+    manual.write_text(
+        '---\nchat_link: "https://chatgpt.com/c/stable-id"\n---\nManual context\n',
+        encoding="utf-8",
+    )
+    nested = tmp_path / "assets" / "copied-note.md"
+    nested.parent.mkdir()
+    nested.write_text(
+        '---\nchat_link: "https://chatgpt.com/c/stable-id"\n---\nNested copy\n',
+        encoding="utf-8",
+    )
+
+    renamed = create_conversation("New title", ts, "stable-id")
+    save_collection(
+        ConversationCollection(conversations=[renamed]),
+        tmp_path,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+
+    assert not (tmp_path / "Old title.md").exists()
+    assert (tmp_path / "New title.md").exists()
+    assert manual.read_text(encoding="utf-8").endswith("Manual context\n")
+    assert nested.read_text(encoding="utf-8").endswith("Nested copy\n")
