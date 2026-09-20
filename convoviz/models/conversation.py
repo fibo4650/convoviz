@@ -238,6 +238,7 @@ class Conversation(BaseModel):
         for node in self.all_message_nodes:
             if not node.message:
                 continue
+            ambiguous_keys.update(node.message.internal_citation_unresolved_keys)
             for key, metadata in node.message.internal_citation_map.items():
                 existing = aggregated_map.get(key)
                 if existing is None:

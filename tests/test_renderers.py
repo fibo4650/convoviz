@@ -719,7 +719,137 @@ def test_render_conversation_local_ambiguity_masks_tool_fallback() -> None:
     assert "turn0search0" in assistant.internal_citation_claimed_keys
     assert "turn0search0" in assistant.internal_citation_unresolved_keys
     assert "turn0search0" not in assistant.internal_citation_map
-    assert conversation.citation_map["turn0search0"]["title"] == "Tool Source"
+    assert "turn0search0" not in conversation.citation_map
+
+    rendered = render_conversation(
+        conversation,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+
+    assert marker in rendered
+    assert "Tool Source" not in rendered
+    assert "Source A" not in rendered
+    assert "Source B" not in rendered
+
+
+
+
+def test_render_conversation_global_ambiguity_blocks_third_message_fallback() -> None:
+    """Any locally ambiguous claim makes that key unsafe for global fallback."""
+    ts = datetime(2024, 1, 1).timestamp()
+    marker = "\ue200cite\ue202turn0search0\ue201"
+    ref = {"ref_type": "search", "turn_index": 0, "ref_index": 0}
+
+    conversation = Conversation(
+        title="Global ambiguous citation masks fallback",
+        create_time=ts,
+        update_time=ts,
+        mapping={
+            "root": {
+                "id": "root",
+                "message": None,
+                "parent": None,
+                "children": ["tool"],
+            },
+            "tool": {
+                "id": "tool",
+                "message": {
+                    "id": "tool",
+                    "author": {"role": "tool", "metadata": {}},
+                    "create_time": ts,
+                    "update_time": ts,
+                    "content": {"content_type": "text", "parts": [""]},
+                    "status": "finished_successfully",
+                    "end_turn": False,
+                    "weight": 1.0,
+                    "metadata": {
+                        "search_result_groups": [
+                            {
+                                "entries": [
+                                    {
+                                        "ref_id": ref,
+                                        "title": "Tool Source",
+                                        "url": "https://example.com/tool",
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "recipient": "all",
+                },
+                "parent": "root",
+                "children": ["assistant-a"],
+            },
+            "assistant-a": {
+                "id": "assistant-a",
+                "message": {
+                    "id": "assistant-a",
+                    "author": {"role": "assistant", "metadata": {}},
+                    "create_time": ts,
+                    "update_time": ts,
+                    "content": {
+                        "content_type": "text",
+                        "parts": ["Ambiguous local metadata without marker"],
+                    },
+                    "status": "finished_successfully",
+                    "end_turn": False,
+                    "weight": 1.0,
+                    "metadata": {
+                        "search_result_groups": [
+                            {
+                                "entries": [
+                                    {
+                                        "ref_id": ref,
+                                        "title": "Source A",
+                                        "url": "https://example.com/a",
+                                    },
+                                    {
+                                        "ref_id": ref,
+                                        "title": "Source B",
+                                        "url": "https://example.com/b",
+                                    },
+                                ]
+                            }
+                        ]
+                    },
+                    "recipient": "all",
+                },
+                "parent": "tool",
+                "children": ["assistant-b"],
+            },
+            "assistant-b": {
+                "id": "assistant-b",
+                "message": {
+                    "id": "assistant-b",
+                    "author": {"role": "assistant", "metadata": {}},
+                    "create_time": ts,
+                    "update_time": ts,
+                    "content": {
+                        "content_type": "text",
+                        "parts": [f"Third-message claim {marker}"],
+                    },
+                    "status": "finished_successfully",
+                    "end_turn": True,
+                    "weight": 1.0,
+                    "metadata": {},
+                    "recipient": "all",
+                },
+                "parent": "assistant-a",
+                "children": [],
+            },
+        },
+        current_node="assistant-b",
+        conversation_id="global-ambiguous-masks-fallback",
+    )
+
+    ambiguous = conversation.mapping["assistant-a"].message
+    third = conversation.mapping["assistant-b"].message
+    assert ambiguous is not None
+    assert third is not None
+    assert "turn0search0" in ambiguous.internal_citation_unresolved_keys
+    assert "turn0search0" not in third.internal_citation_claimed_keys
+    assert "turn0search0" not in conversation.citation_map
 
     rendered = render_conversation(
         conversation,
