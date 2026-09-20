@@ -442,6 +442,7 @@ def render_node(
     asset_resolver: Callable[[str, str | None], str | None] | None = None,
     flavor: str = "standard",
     citation_map: dict[str, dict[str, str | None]] | None = None,
+    fallback_citation_map: dict[str, dict[str, str | None]] | None = None,
     show_timestamp: bool = True,
     last_timestamp: datetime | None = None,
 ) -> str:
@@ -476,9 +477,15 @@ def render_node(
         text = ""
 
     # Process Citations
-    effective_map = (
-        citation_map if citation_map is not None else message.internal_citation_map
-    )
+    if citation_map is not None:
+        # Explicit caller-supplied maps retain their existing override semantics.
+        effective_map = citation_map
+    else:
+        # Current exports may reuse turn/ref keys across messages, so local
+        # definitions are authoritative. The conversation map is only a safe
+        # fallback for keys that are globally unambiguous and absent locally.
+        effective_map = dict(fallback_citation_map or {})
+        effective_map.update(message.internal_citation_map)
     citation_footnotes: list[str] = []
     if message.metadata.citations or effective_map:
         text, citation_footnotes = replace_citations(
@@ -570,7 +577,11 @@ def render_conversation(
     markdown += f"<!-- conversation_id={conversation.conversation_id} -->\n"
 
     # Resolve embedded citations per message. Current exports can reuse the same
-    # turn/ref token for different sources elsewhere in the conversation.
+    # turn/ref token for different sources elsewhere in the conversation, while
+    # older exports can define a visible message's citation in a separate tool
+    # message. The aggregate map omits ambiguous keys and is fallback-only.
+    fallback_citation_map = conversation.citation_map
+
     # Render message nodes based on configured order.
     last_timestamp = None
     if config.markdown.render_order == "active":
@@ -586,6 +597,7 @@ def render_conversation(
                 use_dollar_latex,
                 asset_resolver=asset_resolver,
                 flavor=flavor,
+                fallback_citation_map=fallback_citation_map,
                 show_timestamp=show_timestamp,
                 last_timestamp=last_timestamp,
             )

@@ -541,6 +541,90 @@ def test_render_conversation_scopes_reused_citation_key_per_message() -> None:
     assert marker not in rendered
 
 
+
+def test_render_conversation_uses_unambiguous_tool_citation_as_fallback() -> None:
+    """A tool-defined citation should resolve in a later visible assistant message."""
+    ts = datetime(2024, 1, 1).timestamp()
+    marker = "\ue200cite\ue202turn0search1\ue201"
+    ref = {"ref_type": "search", "turn_index": 0, "ref_index": 1}
+
+    conversation = Conversation(
+        title="Tool citation fallback",
+        create_time=ts,
+        update_time=ts,
+        mapping={
+            "root": {
+                "id": "root",
+                "message": None,
+                "parent": None,
+                "children": ["tool"],
+            },
+            "tool": {
+                "id": "tool",
+                "message": {
+                    "id": "tool",
+                    "author": {"role": "tool", "metadata": {}},
+                    "create_time": ts,
+                    "update_time": ts,
+                    "content": {"content_type": "text", "parts": [""]},
+                    "status": "finished_successfully",
+                    "end_turn": False,
+                    "weight": 1.0,
+                    "metadata": {
+                        "search_result_groups": [
+                            {
+                                "entries": [
+                                    {
+                                        "ref_id": ref,
+                                        "title": "Legacy tool source",
+                                        "url": "https://example.com/tool",
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "recipient": "all",
+                },
+                "parent": "root",
+                "children": ["assistant"],
+            },
+            "assistant": {
+                "id": "assistant",
+                "message": {
+                    "id": "assistant",
+                    "author": {"role": "assistant", "metadata": {}},
+                    "create_time": ts,
+                    "update_time": ts,
+                    "content": {
+                        "content_type": "text",
+                        "parts": [f"Claim from tool search {marker}"],
+                    },
+                    "status": "finished_successfully",
+                    "end_turn": True,
+                    "weight": 1.0,
+                    "metadata": {},
+                    "recipient": "all",
+                },
+                "parent": "tool",
+                "children": [],
+            },
+        },
+        current_node="assistant",
+        conversation_id="tool-citation-fallback",
+    )
+
+    rendered = render_conversation(
+        conversation,
+        ConversationConfig(),
+        AuthorHeaders(),
+    )
+
+    assert "Claim from tool search [^1]" in rendered
+    assert "[^1]: [Legacy tool source](https://example.com/tool)" in rendered
+    assert marker not in rendered
+
+
+
 def test_render_node_preserves_ambiguous_embedded_citation_marker() -> None:
     """Conflicting current-export metadata must stay loss-visible."""
     marker = "\ue200cite\ue202turn0search0\ue201"
